@@ -6,6 +6,7 @@ import * as CodePipelineAction from "@aws-cdk/aws-codepipeline-actions";
 import * as cloudfront from "@aws-cdk/aws-cloudfront";
 import * as origins from "@aws-cdk/aws-cloudfront-origins";
 import * as iam from "@aws-cdk/aws-iam";
+import { ViewerProtocolPolicy } from "@aws-cdk/aws-cloudfront";
 
 export class AwsVirtualLollyFrontendPipelineStack extends cdk.Stack {
   constructor(scope: cdk.Construct, id: string, props?: cdk.StackProps) {
@@ -16,15 +17,44 @@ export class AwsVirtualLollyFrontendPipelineStack extends cdk.Stack {
       bucketName: `${id}-website-bucket`.toLocaleLowerCase(),
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       websiteIndexDocument: "index.html",
-      websiteErrorDocument: "error.html",
+      websiteErrorDocument: "melted/index.html",
       publicReadAccess: true,
+      websiteRoutingRules: [
+        //Tedirect all newly created dynamic lollies to # url.
+        //This is to resolve s3 issue with client side routes.
+        //On hard refresh e.g. /dynamiclolly/{id}, when redirecting to /dynamiclolly/index.html, S3 changes the browser url and does not keep track of the url parameter
+        {
+          condition: {
+            httpErrorCodeReturnedEquals: "404",
+            keyPrefixEquals: "dynamiclolly/",
+          },
+          hostName: "d1q0nbzkm0ithh.cloudfront.net", //not sure how to set cloudfront hostname dynamically (chicken egg race issue)
+          protocol: S3.RedirectProtocol.HTTPS,
+          httpRedirectCode: "302",
+          replaceKey: S3.ReplaceKey.prefixWith("dynamiclolly/#/"),
+        },
+        //redirect all newly created lollies (static pages not created yet) to dynmaiclolly page
+        {
+          condition: {
+            httpErrorCodeReturnedEquals: "404",
+            keyPrefixEquals: "lolly/",
+          },
+          hostName: "d1q0nbzkm0ithh.cloudfront.net",
+          protocol: S3.RedirectProtocol.HTTPS,
+          httpRedirectCode: "302",
+          replaceKey: S3.ReplaceKey.prefixWith("dynamiclolly/#/"),
+        },
+      ],
     });
 
     const dist = new cloudfront.Distribution(
       this,
       `${id}_cloudfront_dist_for_website_bucket`,
       {
-        defaultBehavior: { origin: new origins.S3Origin(bucketWebsite) },
+        defaultBehavior: {
+          origin: new origins.S3Origin(bucketWebsite),
+          viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
       }
     );
 
@@ -79,6 +109,7 @@ export class AwsVirtualLollyFrontendPipelineStack extends cdk.Stack {
                       "npm install",
                       "echo install phase",
                       "echo ${GATSBY_AWS_APPSYNC_API_KEY}",
+                      "echo ${GATSBY_SITE_URL}",
                     ],
                   },
                   build: {
